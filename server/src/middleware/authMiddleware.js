@@ -1,22 +1,43 @@
-const express = require("express");
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
-const {
-  register,
-  login,
-} = require("../controllers/authController");
+const protect = async (req, res, next) => {
+  try {
+    let token;
 
-const protect = require("../middleware/authMiddleware");
+    // Check if authorization header exists and starts with Bearer
+    if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith("Bearer")
+    ) {
+      token = req.headers.authorization.split(" ")[1];
+    }
 
-const router = express.Router();
+    if (!token) {
+      return res.status(401).json({
+        message: "Not authorized, no token provided",
+      });
+    }
 
-router.post("/register", register);
-router.post("/login", login);
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-router.get("/me", protect, (req, res) => {
-  res.json({
-    message: "You are authenticated!",
-    user: req.user,
-  });
-});
+    // Get user from token
+    req.user = await User.findById(decoded.userId).select("-password");
 
-module.exports = router;
+    if (!req.user) {
+      return res.status(401).json({
+        message: "User not found",
+      });
+    }
+
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      message: "Not authorized, token failed",
+      error: error.message,
+    });
+  }
+};
+
+module.exports = protect;
