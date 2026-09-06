@@ -1,5 +1,5 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const PlantSensorReading = require("../models/PlantSensorReading");
+const { generateHealthIntelligence } = require("./healthIntelligenceService");
 
 // Initialize Gemini AI
 let genAI;
@@ -23,185 +23,70 @@ const initializeAI = () => {
 };
 
 /**
- * Calculate statistics from sensor readings
+ * Create structured prompt for AI analysis based on deterministic intelligence
  */
-const calculateSensorStatistics = (readings) => {
-  if (!readings || readings.length === 0) {
-    return null;
-  }
-
-  const stats = {
-    temperature: { values: [], avg: null, min: null, max: null, latest: null },
-    humidity: { values: [], avg: null, min: null, max: null, latest: null },
-    soilMoisture: { values: [], avg: null, min: null, max: null, latest: null },
-    soilPH: { values: [], avg: null, min: null, max: null, latest: null },
-    lightIntensity: { values: [], avg: null, min: null, max: null, latest: null },
-  };
-
-  // Collect values
-  readings.forEach((reading) => {
-    if (reading.temperature != null) stats.temperature.values.push(reading.temperature);
-    if (reading.humidity != null) stats.humidity.values.push(reading.humidity);
-    if (reading.soilMoisture != null) stats.soilMoisture.values.push(reading.soilMoisture);
-    if (reading.soilPH != null) stats.soilPH.values.push(reading.soilPH);
-    if (reading.lightIntensity != null) stats.lightIntensity.values.push(reading.lightIntensity);
-  });
-
-  // Calculate statistics for each metric
-  Object.keys(stats).forEach((metric) => {
-    const values = stats[metric].values;
-    if (values.length > 0) {
-      stats[metric].latest = values[0]; // Latest reading is first (sorted by timestamp desc)
-      stats[metric].avg = parseFloat((values.reduce((a, b) => a + b, 0) / values.length).toFixed(2));
-      stats[metric].min = parseFloat(Math.min(...values).toFixed(2));
-      stats[metric].max = parseFloat(Math.max(...values).toFixed(2));
-      
-      // Calculate trend (comparing recent vs older readings)
-      if (values.length >= 10) {
-        const recentAvg = values.slice(0, 5).reduce((a, b) => a + b, 0) / 5;
-        const olderAvg = values.slice(-5).reduce((a, b) => a + b, 0) / 5;
-        const difference = recentAvg - olderAvg;
-        
-        if (Math.abs(difference) > 0.1) {
-          stats[metric].trend = difference > 0 ? "increasing" : "decreasing";
-          stats[metric].trendValue = parseFloat(difference.toFixed(2));
-        } else {
-          stats[metric].trend = "stable";
-          stats[metric].trendValue = 0;
-        }
-      }
-    }
-  });
-
-  return stats;
-};
-
-/**
- * Detect abnormal readings based on typical plant conditions
- */
-const detectAbnormalConditions = (stats) => {
-  const abnormalities = [];
-
-  // Temperature checks (typical range: 15-30°C)
-  if (stats.temperature.latest != null) {
-    if (stats.temperature.latest < 10) {
-      abnormalities.push({ metric: "temperature", issue: "critically low", value: stats.temperature.latest });
-    } else if (stats.temperature.latest < 15) {
-      abnormalities.push({ metric: "temperature", issue: "low", value: stats.temperature.latest });
-    } else if (stats.temperature.latest > 35) {
-      abnormalities.push({ metric: "temperature", issue: "critically high", value: stats.temperature.latest });
-    } else if (stats.temperature.latest > 30) {
-      abnormalities.push({ metric: "temperature", issue: "high", value: stats.temperature.latest });
-    }
-  }
-
-  // Humidity checks (typical range: 40-70%)
-  if (stats.humidity.latest != null) {
-    if (stats.humidity.latest < 30) {
-      abnormalities.push({ metric: "humidity", issue: "very low", value: stats.humidity.latest });
-    } else if (stats.humidity.latest < 40) {
-      abnormalities.push({ metric: "humidity", issue: "low", value: stats.humidity.latest });
-    } else if (stats.humidity.latest > 80) {
-      abnormalities.push({ metric: "humidity", issue: "very high", value: stats.humidity.latest });
-    } else if (stats.humidity.latest > 70) {
-      abnormalities.push({ metric: "humidity", issue: "high", value: stats.humidity.latest });
-    }
-  }
-
-  // Soil moisture checks (typical range: 40-60%)
-  if (stats.soilMoisture.latest != null) {
-    if (stats.soilMoisture.latest < 20) {
-      abnormalities.push({ metric: "soilMoisture", issue: "critically low", value: stats.soilMoisture.latest });
-    } else if (stats.soilMoisture.latest < 30) {
-      abnormalities.push({ metric: "soilMoisture", issue: "low", value: stats.soilMoisture.latest });
-    } else if (stats.soilMoisture.latest > 80) {
-      abnormalities.push({ metric: "soilMoisture", issue: "very high (risk of overwatering)", value: stats.soilMoisture.latest });
-    }
-  }
-
-  // Soil pH checks (typical range: 6.0-7.5)
-  if (stats.soilPH.latest != null) {
-    if (stats.soilPH.latest < 5.5) {
-      abnormalities.push({ metric: "soilPH", issue: "too acidic", value: stats.soilPH.latest });
-    } else if (stats.soilPH.latest > 8.0) {
-      abnormalities.push({ metric: "soilPH", issue: "too alkaline", value: stats.soilPH.latest });
-    }
-  }
-
-  // Light intensity checks (typical range varies, but very low is concerning)
-  if (stats.lightIntensity.latest != null && stats.lightIntensity.latest < 1000) {
-    abnormalities.push({ metric: "lightIntensity", issue: "low light conditions", value: stats.lightIntensity.latest });
-  }
-
-  return abnormalities;
-};
-
-/**
- * Create structured prompt for AI analysis
- */
-const createAnalysisPrompt = (plant, stats, abnormalities, readingsCount) => {
-  const prompt = `You are an expert plant health analysis system. Analyze the following plant data and provide a structured health assessment.
+const createEnhancedAnalysisPrompt = (plant, intelligence) => {
+  const { healthScore, status, scoreBreakdown, scoreReasons, detectedRisks, sensorSnapshot, dataQuality } = intelligence;
+  
+  const prompt = `You are an expert plant health advisor. Analyze the following plant health data and provide contextual explanations and actionable recommendations.
 
 **Plant Information:**
 - Name: ${plant.name}
 - Species: ${plant.species}
 - Crop Type: ${plant.cropType}
 - Growth Stage: ${plant.growthStage}
-- Planting Date: ${plant.plantingDate.toISOString().split('T')[0]}
+- Age: ${intelligence.plantInfo.ageInDays} days
 - Location: ${plant.location}
-- Current Health Status: ${plant.healthStatus}
-- Age: ${Math.floor((Date.now() - new Date(plant.plantingDate)) / (1000 * 60 * 60 * 24))} days
 
-**Current Sensor Readings (Latest):**
-- Temperature: ${stats.temperature.latest != null ? stats.temperature.latest + '°C' : 'N/A'}
-- Humidity: ${stats.humidity.latest != null ? stats.humidity.latest + '%' : 'N/A'}
-- Soil Moisture: ${stats.soilMoisture.latest != null ? stats.soilMoisture.latest + '%' : 'N/A'}
-- Soil pH: ${stats.soilPH.latest != null ? stats.soilPH.latest : 'N/A'}
-- Light Intensity: ${stats.lightIntensity.latest != null ? stats.lightIntensity.latest + ' lux' : 'N/A'}
+**DETERMINISTIC HEALTH ANALYSIS (DO NOT CONTRADICT THESE FINDINGS):**
+- Overall Health Score: ${healthScore}/100
+- Health Status: ${status.toUpperCase()}
+- Data Quality: ${dataQuality.quality.toUpperCase()} (${dataQuality.completeness.toFixed(1)}% complete)
 
-**Historical Averages (${readingsCount} readings analyzed):**
-- Avg Temperature: ${stats.temperature.avg != null ? stats.temperature.avg + '°C' : 'N/A'}
-- Avg Humidity: ${stats.humidity.avg != null ? stats.humidity.avg + '%' : 'N/A'}
-- Avg Soil Moisture: ${stats.soilMoisture.avg != null ? stats.soilMoisture.avg + '%' : 'N/A'}
-- Avg Soil pH: ${stats.soilPH.avg != null ? stats.soilPH.avg : 'N/A'}
-- Avg Light Intensity: ${stats.lightIntensity.avg != null ? stats.lightIntensity.avg + ' lux' : 'N/A'}
+**Current Sensor Readings:**
+- Temperature: ${sensorSnapshot.temperature != null ? sensorSnapshot.temperature + '°C' : 'Not available'}
+- Humidity: ${sensorSnapshot.humidity != null ? sensorSnapshot.humidity + '%' : 'Not available'}
+- Soil Moisture: ${sensorSnapshot.soilMoisture != null ? sensorSnapshot.soilMoisture + '%' : 'Not available'}
+- Soil pH: ${sensorSnapshot.ph != null ? sensorSnapshot.ph : 'Not available'}
+- Light Intensity: ${sensorSnapshot.light != null ? sensorSnapshot.light + ' lux' : 'Not available'}
 
-**Range (Min-Max):**
-- Temperature: ${stats.temperature.min != null ? stats.temperature.min + '°C to ' + stats.temperature.max + '°C' : 'N/A'}
-- Humidity: ${stats.humidity.min != null ? stats.humidity.min + '% to ' + stats.humidity.max + '%' : 'N/A'}
-- Soil Moisture: ${stats.soilMoisture.min != null ? stats.soilMoisture.min + '% to ' + stats.soilMoisture.max + '%' : 'N/A'}
+**Score Breakdown & Reasoning:**
+- Soil Moisture: ${scoreBreakdown.soilMoisture}/20 points - ${scoreReasons.soilMoisture}
+- Temperature: ${scoreBreakdown.temperature}/20 points - ${scoreReasons.temperature}
+- Humidity: ${scoreBreakdown.humidity}/20 points - ${scoreReasons.humidity}
+- pH: ${scoreBreakdown.ph}/20 points - ${scoreReasons.ph}
+- Light: ${scoreBreakdown.light}/20 points - ${scoreReasons.light}
 
-**Trends:**
-- Temperature: ${stats.temperature.trend || 'insufficient data'}${stats.temperature.trendValue ? ' (' + stats.temperature.trendValue + '°C)' : ''}
-- Humidity: ${stats.humidity.trend || 'insufficient data'}${stats.humidity.trendValue ? ' (' + stats.humidity.trendValue + '%)' : ''}
-- Soil Moisture: ${stats.soilMoisture.trend || 'insufficient data'}${stats.soilMoisture.trendValue ? ' (' + stats.soilMoisture.trendValue + '%)' : ''}
+**Detected Health Risks (${detectedRisks.length} total):**
+${detectedRisks.length > 0 ? detectedRisks.map(r => `- [${r.severity.toUpperCase()}] ${r.type}: ${r.message}`).join('\n') : '- No significant risks detected'}
 
-**Detected Abnormalities:**
-${abnormalities.length > 0 ? abnormalities.map(a => `- ${a.metric}: ${a.issue} (value: ${a.value})`).join('\n') : '- No significant abnormalities detected'}
+**Your Task:**
+Based on this deterministic analysis, provide:
+1. A clear summary explaining the plant's condition
+2. Contextual interpretation of the findings
+3. Specific, actionable recommendations
+4. Irrigation guidance
+5. Environmental management advice
 
-**Instructions:**
-Analyze this plant's health based on the provided sensor data. Your analysis must:
-1. Be based ONLY on the provided data - do not invent sensor values
-2. Consider the plant's species, crop type, and growth stage
-3. Identify any concerning trends or conditions
-4. Provide practical, actionable recommendations
-5. Avoid claiming certainty about diseases - phrase as risks or possibilities
-6. Return ONLY valid JSON (no markdown, no code blocks, no additional text)
+**Important Guidelines:**
+- Accept the health score and status as definitive
+- Do not recalculate or contradict the health metrics
+- Focus on explaining WHY these conditions exist
+- Provide practical, species-appropriate recommendations
+- Consider the plant's growth stage and age
+- Be specific about timing and quantities for recommendations
 
 **Required JSON Response Format:**
 {
-  "healthScore": <number 0-100>,
-  "healthStatus": "<one of: Healthy | Moderate Stress | At Risk | Critical>",
-  "summary": "<2-3 sentence overall assessment>",
-  "detectedIssues": [<array of specific issues found>],
-  "riskLevel": "<Low | Medium | High | Critical>",
+  "summary": "<2-3 sentence overview explaining the plant's current condition>",
+  "detectedIssues": [<array of issues found, based on the risks above>],
   "recommendations": [<array of 3-5 specific actionable recommendations>],
-  "irrigationAdvice": "<specific watering guidance>",
+  "irrigationAdvice": "<specific watering guidance with frequency/amount>",
   "environmentalAdvice": "<specific environmental control guidance>",
-  "confidence": <number 0-1 indicating confidence level>
+  "confidence": <number 0-1 indicating your confidence in this analysis>
 }
 
-Respond ONLY with the JSON object. Do not include any other text, markdown formatting, or code blocks.`;
+Respond ONLY with the JSON object. No markdown formatting or additional text.`;
 
   return prompt;
 };
@@ -219,29 +104,25 @@ const parseAIResponse = (responseText) => {
 
     const parsed = JSON.parse(cleanedText);
 
-    // Validate required fields
-    const required = ['healthScore', 'healthStatus', 'summary', 'detectedIssues', 'riskLevel', 'recommendations', 'confidence'];
+    // Validate required fields for new format
+    const required = ['summary', 'recommendations', 'confidence'];
     for (const field of required) {
       if (!(field in parsed)) {
         throw new Error(`Missing required field: ${field}`);
       }
     }
 
-    // Validate types and ranges
-    if (typeof parsed.healthScore !== 'number' || parsed.healthScore < 0 || parsed.healthScore > 100) {
-      throw new Error('healthScore must be a number between 0 and 100');
-    }
-
+    // Validate types
     if (typeof parsed.confidence !== 'number' || parsed.confidence < 0 || parsed.confidence > 1) {
-      throw new Error('confidence must be a number between 0 and 1');
+      parsed.confidence = 0.8; // Fallback value
     }
 
     if (!Array.isArray(parsed.detectedIssues)) {
-      throw new Error('detectedIssues must be an array');
+      parsed.detectedIssues = [];
     }
 
     if (!Array.isArray(parsed.recommendations)) {
-      throw new Error('recommendations must be an array');
+      parsed.recommendations = [];
     }
 
     return parsed;
@@ -251,7 +132,92 @@ const parseAIResponse = (responseText) => {
 };
 
 /**
- * Main function to analyze plant health using AI
+ * Create AI fallback when Gemini fails
+ */
+const createAIFallback = (intelligence) => {
+  const { healthScore, status, detectedRisks, sensorSnapshot } = intelligence;
+  
+  let summary = `Plant health score is ${healthScore}/100 (${status})`;
+  if (detectedRisks.length > 0) {
+    summary += ` with ${detectedRisks.length} detected risk(s)`;
+  }
+  summary += ". Analysis based on deterministic sensor evaluation.";
+  
+  const detectedIssues = detectedRisks.map(risk => risk.message);
+  
+  const recommendations = [];
+  if (detectedRisks.some(r => r.type === "water_stress")) {
+    recommendations.push("Increase watering frequency based on soil moisture levels");
+  }
+  if (detectedRisks.some(r => r.type === "heat_stress")) {
+    recommendations.push("Provide shade or cooling during peak temperature hours");
+  }
+  if (detectedRisks.some(r => r.type === "fungal_risk")) {
+    recommendations.push("Improve air circulation and monitor for fungal symptoms");
+  }
+  if (detectedRisks.some(r => r.type === "ph_abnormal")) {
+    recommendations.push("Test and adjust soil pH levels");
+  }
+  if (recommendations.length === 0) {
+    recommendations.push("Continue current care routine");
+  }
+  
+  let irrigationAdvice = "Monitor soil moisture levels regularly";
+  if (sensorSnapshot.soilMoisture != null) {
+    if (sensorSnapshot.soilMoisture < 30) {
+      irrigationAdvice = "Water immediately - soil moisture is critically low";
+    } else if (sensorSnapshot.soilMoisture < 40) {
+      irrigationAdvice = "Water within 24 hours - soil moisture is low";
+    } else if (sensorSnapshot.soilMoisture > 70) {
+      irrigationAdvice = "Reduce watering frequency - soil moisture is high";
+    }
+  }
+  
+  let environmentalAdvice = "Maintain stable growing conditions";
+  if (sensorSnapshot.temperature != null) {
+    if (sensorSnapshot.temperature > 32) {
+      environmentalAdvice = "Provide cooling - temperature is too high";
+    } else if (sensorSnapshot.temperature < 15) {
+      environmentalAdvice = "Provide warming - temperature is too low";
+    }
+  }
+  
+  return {
+    summary,
+    detectedIssues,
+    recommendations,
+    irrigationAdvice,
+    environmentalAdvice,
+    confidence: 0.7 // Lower confidence for fallback
+  };
+};
+
+/**
+ * Map new status format to legacy format
+ */
+const mapStatusToLegacyFormat = (status) => {
+  const statusMap = {
+    'excellent': 'Healthy',
+    'healthy': 'Healthy', 
+    'stressed': 'Moderate Stress',
+    'critical': 'Critical',
+    'unknown': 'At Risk'
+  };
+  return statusMap[status] || 'At Risk';
+};
+
+/**
+ * Determine risk level based on detected risks and health score
+ */
+const determineRiskLevel = (detectedRisks, healthScore) => {
+  if (detectedRisks.some(r => r.severity === 'critical')) return 'Critical';
+  if (detectedRisks.some(r => r.severity === 'high') || healthScore < 50) return 'High';
+  if (detectedRisks.some(r => r.severity === 'medium') || healthScore < 75) return 'Medium';
+  return 'Low';
+};
+
+/**
+ * Main function to analyze plant health using deterministic intelligence + AI
  */
 const analyzePlantHealth = async (plant, userId) => {
   try {
@@ -260,43 +226,79 @@ const analyzePlantHealth = async (plant, userId) => {
       initializeAI();
     }
 
-    // Fetch sensor readings from MongoDB
-    const readings = await PlantSensorReading.find({ plantId: plant._id })
-      .sort({ timestamp: -1 })
-      .limit(50); // Last 50 readings for analysis
-
-    if (!readings || readings.length === 0) {
-      throw new Error("No sensor readings available for this plant");
+    let healthIntelligence;
+    try {
+      // Generate deterministic health intelligence
+      healthIntelligence = await generateHealthIntelligence(plant);
+    } catch (error) {
+      // If health intelligence fails, still try to proceed with basic data
+      if (error.message.includes("No sensor readings")) {
+        throw error; // Rethrow this specific error
+      }
+      
+      // For other health intelligence errors, create a fallback
+      healthIntelligence = {
+        healthScore: 0,
+        status: "unknown",
+        scoreBreakdown: { soilMoisture: 0, temperature: 0, humidity: 0, ph: 0, light: 0 },
+        scoreReasons: { soilMoisture: "Data error", temperature: "Data error", humidity: "Data error", ph: "Data error", light: "Data error" },
+        detectedRisks: [],
+        riskCount: 0,
+        sensorSnapshot: { temperature: null, humidity: null, soilMoisture: null, ph: null, light: null },
+        dataQuality: { quality: "no_data", readingCount: 0, availableSensors: 0, completeness: 0, issues: ["Health intelligence generation failed"] },
+        plantInfo: {
+          name: plant.name,
+          species: plant.species,
+          ageInDays: Math.floor((Date.now() - new Date(plant.plantingDate)) / (1000 * 60 * 60 * 24))
+        }
+      };
     }
 
-    // Calculate statistics
-    const stats = calculateSensorStatistics(readings);
-    
-    if (!stats) {
-      throw new Error("Failed to calculate sensor statistics");
+    let aiAnalysis = null;
+    try {
+      // Create AI prompt with deterministic intelligence
+      const prompt = createEnhancedAnalysisPrompt(plant, healthIntelligence);
+
+      // Call Gemini AI
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const aiResponseText = response.text();
+
+      // Parse AI response
+      aiAnalysis = parseAIResponse(aiResponseText);
+      
+    } catch (error) {
+      console.warn("AI analysis failed, providing fallback:", error.message);
+      
+      // AI fallback - provide basic interpretation based on deterministic intelligence
+      aiAnalysis = createAIFallback(healthIntelligence);
     }
 
-    // Detect abnormalities
-    const abnormalities = detectAbnormalConditions(stats);
+    // Combine deterministic intelligence with AI analysis
+    const combinedAnalysis = {
+      // Deterministic data (source of truth)
+      healthScore: healthIntelligence.healthScore,
+      healthStatus: mapStatusToLegacyFormat(healthIntelligence.status),
+      detectedRisks: healthIntelligence.detectedRisks,
+      scoreBreakdown: healthIntelligence.scoreBreakdown,
+      
+      // AI contextual analysis
+      summary: aiAnalysis.summary || "Analysis completed",
+      detectedIssues: aiAnalysis.detectedIssues || [],
+      riskLevel: determineRiskLevel(healthIntelligence.detectedRisks, healthIntelligence.healthScore),
+      recommendations: aiAnalysis.recommendations || [],
+      irrigationAdvice: aiAnalysis.irrigationAdvice || "Monitor soil moisture levels",
+      environmentalAdvice: aiAnalysis.environmentalAdvice || "Maintain stable conditions",
+      confidence: aiAnalysis.confidence || 0.8,
+      
+      // Metadata
+      analyzedAt: new Date().toISOString(),
+      readingsAnalyzed: healthIntelligence.dataQuality.readingCount,
+      sensorStatistics: healthIntelligence.sensorSnapshot,
+      dataQuality: healthIntelligence.dataQuality,
+    };
 
-    // Create AI prompt
-    const prompt = createAnalysisPrompt(plant, stats, abnormalities, readings.length);
-
-    // Call Gemini AI
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const aiResponseText = response.text();
-
-    // Parse and validate response
-    const analysis = parseAIResponse(aiResponseText);
-
-    // Add metadata
-    analysis.analyzedAt = new Date().toISOString();
-    analysis.readingsAnalyzed = readings.length;
-    analysis.sensorStatistics = stats;
-    analysis.abnormalConditions = abnormalities;
-
-    return analysis;
+    return combinedAnalysis;
   } catch (error) {
     throw error;
   }
