@@ -32,11 +32,49 @@ exports.runWhatIfSimulation = async (req, res) => {
       return res.status(404).json({ error: 'Machine not found' });
     }
     
-    // Verify ownership
-    const plant = await Plant.findById(machine.plantId);
-    if (!plant || plant.factoryId.toString() !== req.user.factoryId.toString()) {
-      return res.status(403).json({ error: 'Access denied' });
+    // DEBUG: Log ownership chain before validation
+    console.log('\n=== WHAT-IF OWNERSHIP DEBUG ===');
+    console.log('Request User:', {
+      _id: req.user._id.toString(),
+      email: req.user.email
+    });
+    console.log('Machine:', {
+      _id: machine._id.toString(),
+      name: machine.name,
+      plantId: machine.plantId ? machine.plantId.toString() : null
+    });
+    
+    // Verify ownership (skip if machine has no plant - legacy data)
+    if (machine.plantId) {
+      const plant = await Plant.findById(machine.plantId);
+      
+      console.log('Plant:', plant ? {
+        _id: plant._id.toString(),
+        name: plant.name,
+        owner: plant.owner.toString()
+      } : 'NOT FOUND');
+      
+      if (plant) {
+        const ownerMatch = plant.owner.toString() === req.user._id.toString();
+        console.log('Ownership Check:', {
+          plantOwner: plant.owner.toString(),
+          requestUser: req.user._id.toString(),
+          match: ownerMatch
+        });
+        
+        if (!ownerMatch) {
+          console.log('❌ ACCESS DENIED: User does not own plant');
+          console.log('=== END DEBUG ===\n');
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        console.log('✓ Ownership verified');
+      } else {
+        console.log('⚠️ Plant not found for plantId:', machine.plantId.toString());
+      }
+    } else {
+      console.log('ℹ️ Machine has no plantId - skipping ownership check');
     }
+    console.log('=== END DEBUG ===\n');
     
     // Run simulation
     const result = await simulateTelemetryChange(machine, modifications, options);
@@ -90,10 +128,12 @@ exports.runScenarios = async (req, res) => {
       return res.status(404).json({ error: 'Machine not found' });
     }
     
-    // Verify ownership
-    const plant = await Plant.findById(machine.plantId);
-    if (!plant || plant.factoryId.toString() !== req.user.factoryId.toString()) {
-      return res.status(403).json({ error: 'Access denied' });
+    // Verify ownership (skip if machine has no plant - legacy data)
+    if (machine.plantId) {
+      const plant = await Plant.findById(machine.plantId);
+      if (plant && plant.owner.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
     }
     
     // Run batch simulations
@@ -141,10 +181,15 @@ exports.runWhatIfWithAI = async (req, res) => {
       return res.status(404).json({ error: 'Machine not found' });
     }
     
-    // Verify ownership
-    const plant = await Plant.findById(machine.plantId);
-    if (!plant || plant.factoryId.toString() !== req.user.factoryId.toString()) {
-      return res.status(403).json({ error: 'Access denied' });
+    // Fetch plant for ownership verification and AI context
+    let plant = null;
+    if (machine.plantId) {
+      plant = await Plant.findById(machine.plantId);
+      
+      // Verify ownership
+      if (plant && plant.owner.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
     }
     
     // Run simulation

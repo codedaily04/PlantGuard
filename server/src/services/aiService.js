@@ -1,4 +1,4 @@
-const { GoogleGenAI } = require("@google/genai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { generateMachineHealthIntelligence } = require("./healthIntelligenceService");
 
 // Lazy load to avoid circular dependencies
@@ -11,14 +11,19 @@ function getDegradationRiskService() {
   return calculateMachineDegradationRisk;
 }
 
-let ai;
+let genAI;
+let model;
 
 const initializeAI = () => {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error("GEMINI_API_KEY is not configured in environment variables");
   }
   
-  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  
+  // Use configurable model, default to gemini-1.5-flash
+  const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  model = genAI.getGenerativeModel({ model: modelName });
 };
 
 const createOperationsAdvisorPrompt = (machine, plant, intelligence, degradationRisk, whatIfContext) => {
@@ -299,7 +304,7 @@ const determineRiskLevel = (anomalies = [], healthScore = 100) => {
 
 const analyzeMachineHealth = async (machine, plant, options = {}) => {
   try {
-    if (!ai) {
+    if (!model) {
       initializeAI();
     }
 
@@ -341,11 +346,10 @@ const analyzeMachineHealth = async (machine, plant, options = {}) => {
     try {
       const prompt = createOperationsAdvisorPrompt(machine, plant, healthIntelligence, degradationRisk, whatIfContext);
       
-      // Calls updated for @google/genai syntax
-      const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt,
-        config: {
+      // Use correct @google/generative-ai API
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
           temperature: 0.7,
           topP: 0.95,
           topK: 40,
@@ -354,7 +358,8 @@ const analyzeMachineHealth = async (machine, plant, options = {}) => {
         }
       });
       
-      const aiResponseText = response.text;
+      const response = result.response;
+      const aiResponseText = response.text();
       aiAnalysis = parseAIResponse(aiResponseText);
     } catch (error) {
       console.warn("AI analysis failed, providing fallback:", error.message);

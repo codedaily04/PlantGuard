@@ -16,7 +16,7 @@ const createPlant = async (req, res) => {
     // Verify factory exists and user has access
     const factory = await Factory.findOne({
       _id: factoryId,
-      owner: req.user._id,
+      createdBy: req.user._id,
     });
     
     if (!factory) {
