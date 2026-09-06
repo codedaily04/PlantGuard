@@ -406,11 +406,6 @@ Serve the `dist/` directory with a web server.
 - Check machine → plant → user ownership chain
 - Verify JWT token is being sent in Authorization header
 
-### Gemini API errors
-- Check `GEMINI_API_KEY` is set correctly
-- Verify `GEMINI_MODEL` is a supported model name
-- Check API quotas and rate limits
-- System falls back to deterministic analysis if AI fails
 
 ### MongoDB connection issues
 - Verify MongoDB is running
@@ -424,21 +419,5 @@ Serve the `dist/` directory with a web server.
 
 ## License
 
-[Specify your license here]
+ISC
 
-## Support
-
-For issues and questions:
-- Check existing documentation in `/server/*.md` files
-- Review test files for usage examples
-- Verify environment configuration
-
-## Architecture Documentation
-
-See additional documentation:
-- `server/IMPLEMENTATION_SUMMARY.md` - Overall architecture
-- `server/ANOMALY_DETECTION_SUMMARY.md` - Anomaly detection logic
-- `server/DEGRADATION_RISK_SUMMARY.md` - Risk assessment details
-- `server/WHAT_IF_SIMULATION_SUMMARY.md` - Simulation engine
-- `server/GEMINI_AI_OPERATIONS_ADVISOR_SUMMARY.md` - AI integration
-- `server/DEMO_DATA_SEED_SUMMARY.md` - Demo data structure
