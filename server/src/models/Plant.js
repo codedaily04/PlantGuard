@@ -8,26 +8,15 @@ const plantSchema = new mongoose.Schema(
       trim: true,
     },
 
-    species: {
+    plantType: {
       type: String,
       required: true,
       trim: true,
     },
 
-    cropType: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    growthStage: {
-      type: String,
-      enum: ["SEEDLING", "VEGETATIVE", "FLOWERING", "FRUITING", "MATURE", "HARVESTED"],
-      default: "SEEDLING",
-    },
-
-    plantingDate: {
-      type: Date,
+    factoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Factory",
       required: true,
     },
 
@@ -37,9 +26,24 @@ const plantSchema = new mongoose.Schema(
       trim: true,
     },
 
+    capacity: {
+      type: Number,
+      min: 0,
+    },
+
+    commissioningDate: {
+      type: Date,
+    },
+
+    status: {
+      type: String,
+      enum: ["OPERATIONAL", "MAINTENANCE", "OFFLINE", "STARTUP"],
+      default: "OPERATIONAL",
+    },
+
     healthStatus: {
       type: String,
-      enum: ["HEALTHY", "STRESSED", "AT_RISK", "DISEASED", "CRITICAL"],
+      enum: ["HEALTHY", "WARNING", "CRITICAL", "OFFLINE"],
       default: "HEALTHY",
     },
 
@@ -54,7 +58,8 @@ const plantSchema = new mongoose.Schema(
   }
 );
 
-// Index for efficient querying by owner
+// Index for efficient querying
 plantSchema.index({ owner: 1 });
+plantSchema.index({ factoryId: 1 });
 
 module.exports = mongoose.model("Plant", plantSchema);

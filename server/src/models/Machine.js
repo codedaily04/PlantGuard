@@ -15,6 +15,11 @@ const machineSchema = new mongoose.Schema(
       trim: true,
     },
 
+    plantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Plant",
+    },
+
     factoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Factory",
@@ -51,5 +56,8 @@ const machineSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+machineSchema.index({ plantId: 1 });
+machineSchema.index({ factoryId: 1 });
 
 module.exports = mongoose.model("Machine", machineSchema);
