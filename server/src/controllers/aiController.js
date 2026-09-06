@@ -32,10 +32,34 @@ const analyzePlant = async (req, res) => {
     const analysis = await analyzePlantHealth(plant, req.user._id);
 
     res.json({
-      message: "Plant health analysis completed successfully",
-      plantId: plant._id,
-      plantName: plant.name,
-      analysis,
+      success: true,
+      plant: {
+        id: plant._id,
+        name: plant.name,
+        species: plant.species,
+        cropType: plant.cropType,
+        growthStage: plant.growthStage,
+        location: plant.location
+      },
+      health: {
+        score: analysis.healthScore,
+        status: analysis.healthStatus,
+        detectedRisks: analysis.detectedRisks,
+        scoreBreakdown: analysis.scoreBreakdown
+      },
+      aiAnalysis: {
+        summary: analysis.summary,
+        detectedIssues: analysis.detectedIssues,
+        recommendations: analysis.recommendations,
+        irrigationAdvice: analysis.irrigationAdvice,
+        environmentalAdvice: analysis.environmentalAdvice,
+        confidence: analysis.confidence
+      },
+      metadata: {
+        readingsAnalyzed: analysis.readingsAnalyzed,
+        analyzedAt: analysis.analyzedAt,
+        dataQuality: analysis.dataQuality
+      }
     });
   } catch (error) {
     console.error("AI Analysis Error:", error);
