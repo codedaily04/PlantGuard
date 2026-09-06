@@ -1,11 +1,33 @@
 const Plant = require("../models/Plant");
+const Factory = require("../models/Factory");
 
 // CREATE PLANT
 const createPlant = async (req, res) => {
   try {
+    // Validate required fields for industrial plant
+    const { name, plantType, factoryId, location } = req.body;
+    
+    if (!name || !plantType || !factoryId || !location) {
+      return res.status(400).json({
+        message: "Missing required fields: name, plantType, factoryId, location",
+      });
+    }
+    
+    // Verify factory exists and user has access
+    const factory = await Factory.findOne({
+      _id: factoryId,
+      owner: req.user._id,
+    });
+    
+    if (!factory) {
+      return res.status(404).json({
+        message: "Factory not found or access denied",
+      });
+    }
+
     const plant = await Plant.create({
       ...req.body,
-      owner: req.user._id, // From JWT middleware
+      owner: req.user._id,
     });
 
     res.status(201).json({
