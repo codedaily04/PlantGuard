@@ -1,7 +1,6 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { generateHealthIntelligence } = require("./healthIntelligenceService");
+const { generateMachineHealthIntelligence } = require("./healthIntelligenceService");
 
-// Initialize Gemini AI
 let genAI;
 let model;
 
@@ -22,81 +21,68 @@ const initializeAI = () => {
   });
 };
 
-/**
- * Create structured prompt for AI analysis based on deterministic intelligence
- */
-const createEnhancedAnalysisPrompt = (plant, intelligence) => {
-  const { healthScore, status, scoreBreakdown, scoreReasons, detectedRisks, sensorSnapshot, dataQuality } = intelligence;
+const createOperationsAdvisorPrompt = (machine, plant, intelligence) => {
+  const { healthScore, status, telemetry, anomalies, dataQuality } = intelligence;
   
-  const prompt = `You are an expert plant health advisor. Analyze the following plant health data and provide contextual explanations and actionable recommendations.
+  const prompt = `You are an AI operations advisor for industrial equipment monitoring.
+Analyze machine telemetry data and operational health metrics to provide actionable insights.
 
-**Plant Information:**
-- Name: ${plant.name}
-- Species: ${plant.species}
-- Crop Type: ${plant.cropType}
-- Growth Stage: ${plant.growthStage}
-- Age: ${intelligence.plantInfo.ageInDays} days
+**Machine Information:**
+- Machine: ${machine.name}
+- Type: ${machine.type}
+- Plant: ${plant.name}
 - Location: ${plant.location}
 
-**DETERMINISTIC HEALTH ANALYSIS (DO NOT CONTRADICT THESE FINDINGS):**
-- Overall Health Score: ${healthScore}/100
-- Health Status: ${status.toUpperCase()}
-- Data Quality: ${dataQuality.quality.toUpperCase()} (${dataQuality.completeness.toFixed(1)}% complete)
+**DETERMINISTIC HEALTH ANALYSIS (DO NOT CONTRADICT):**
+- Health Score: ${healthScore}/100
+- Status: ${status.toUpperCase()}
+- Data Quality: ${dataQuality.quality.toUpperCase()}
 
-**Current Sensor Readings:**
-- Temperature: ${sensorSnapshot.temperature != null ? sensorSnapshot.temperature + '°C' : 'Not available'}
-- Humidity: ${sensorSnapshot.humidity != null ? sensorSnapshot.humidity + '%' : 'Not available'}
-- Soil Moisture: ${sensorSnapshot.soilMoisture != null ? sensorSnapshot.soilMoisture + '%' : 'Not available'}
-- Soil pH: ${sensorSnapshot.ph != null ? sensorSnapshot.ph : 'Not available'}
-- Light Intensity: ${sensorSnapshot.light != null ? sensorSnapshot.light + ' lux' : 'Not available'}
+**Current Telemetry:**
+- Temperature: ${telemetry.temperature != null ? telemetry.temperature + '°C' : 'N/A'}
+- Vibration: ${telemetry.vibration != null ? telemetry.vibration + ' mm/s' : 'N/A'}
+- Pressure: ${telemetry.pressure != null ? telemetry.pressure + ' PSI' : 'N/A'}
+- Power: ${telemetry.powerConsumption != null ? telemetry.powerConsumption + ' kW' : 'N/A'}
+- Operating Hours: ${telemetry.operatingHours != null ? telemetry.operatingHours : 'N/A'}
 
-**Score Breakdown & Reasoning:**
-- Soil Moisture: ${scoreBreakdown.soilMoisture}/20 points - ${scoreReasons.soilMoisture}
-- Temperature: ${scoreBreakdown.temperature}/20 points - ${scoreReasons.temperature}
-- Humidity: ${scoreBreakdown.humidity}/20 points - ${scoreReasons.humidity}
-- pH: ${scoreBreakdown.ph}/20 points - ${scoreReasons.ph}
-- Light: ${scoreBreakdown.light}/20 points - ${scoreReasons.light}
-
-**Detected Health Risks (${detectedRisks.length} total):**
-${detectedRisks.length > 0 ? detectedRisks.map(r => `- [${r.severity.toUpperCase()}] ${r.type}: ${r.message}`).join('\n') : '- No significant risks detected'}
+**Detected Anomalies (${anomalies.length} total):**
+${anomalies.length > 0 ? anomalies.map(a => `- [${a.severity.toUpperCase()}] ${a.type}: ${a.message}`).join('\n') : '- No anomalies detected'}
 
 **Your Task:**
 Based on this deterministic analysis, provide:
-1. A clear summary explaining the plant's condition
-2. Contextual interpretation of the findings
-3. Specific, actionable recommendations
-4. Irrigation guidance
-5. Environmental management advice
+1. Explanation of detected anomalies
+2. Possible root causes
+3. Operational risks
+4. Maintenance recommendations
+5. Severity assessment
+6. Recommended next actions
 
-**Important Guidelines:**
-- Accept the health score and status as definitive
-- Do not recalculate or contradict the health metrics
-- Focus on explaining WHY these conditions exist
-- Provide practical, species-appropriate recommendations
-- Consider the plant's growth stage and age
-- Be specific about timing and quantities for recommendations
+**Guidelines:**
+- Accept the health score and anomalies as definitive
+- Do NOT recalculate or contradict the metrics
+- Focus on EXPLAINING the anomalies
+- Provide equipment-specific recommendations
+- Be specific about maintenance timing and actions
+- Consider equipment type: ${machine.type}
 
-**Required JSON Response Format:**
+**Response Format (JSON only):**
 {
-  "summary": "<2-3 sentence overview explaining the plant's current condition>",
-  "detectedIssues": [<array of issues found, based on the risks above>],
-  "recommendations": [<array of 3-5 specific actionable recommendations>],
-  "irrigationAdvice": "<specific watering guidance with frequency/amount>",
-  "environmentalAdvice": "<specific environmental control guidance>",
-  "confidence": <number 0-1 indicating your confidence in this analysis>
+  "summary": "<brief operational status explanation>",
+  "detectedIssues": [<issues based on anomalies above>],
+  "recommendations": [<3-5 specific actionable recommendations>],
+  "maintenanceAdvice": "<specific maintenance guidance>",
+  "operationalImpact": "<impact on operations if not addressed>",
+  "severity": "<LOW/MEDIUM/HIGH/CRITICAL>",
+  "confidence": <0-1>
 }
 
-Respond ONLY with the JSON object. No markdown formatting or additional text.`;
+Respond ONLY with JSON. No markdown.`;
 
   return prompt;
 };
 
-/**
- * Parse and validate AI response
- */
 const parseAIResponse = (responseText) => {
   try {
-    // Remove markdown code blocks if present
     let cleanedText = responseText.trim();
     cleanedText = cleanedText.replace(/```json\s*/g, '');
     cleanedText = cleanedText.replace(/```\s*/g, '');
@@ -104,7 +90,6 @@ const parseAIResponse = (responseText) => {
 
     const parsed = JSON.parse(cleanedText);
 
-    // Validate required fields for new format
     const required = ['summary', 'recommendations', 'confidence'];
     for (const field of required) {
       if (!(field in parsed)) {
@@ -112,9 +97,8 @@ const parseAIResponse = (responseText) => {
       }
     }
 
-    // Validate types
     if (typeof parsed.confidence !== 'number' || parsed.confidence < 0 || parsed.confidence > 1) {
-      parsed.confidence = 0.8; // Fallback value
+      parsed.confidence = 0.8;
     }
 
     if (!Array.isArray(parsed.detectedIssues)) {
@@ -131,170 +115,145 @@ const parseAIResponse = (responseText) => {
   }
 };
 
-/**
- * Create AI fallback when Gemini fails
- */
 const createAIFallback = (intelligence) => {
-  const { healthScore, status, detectedRisks, sensorSnapshot } = intelligence;
+  const { healthScore, status, anomalies } = intelligence;
   
-  let summary = `Plant health score is ${healthScore}/100 (${status})`;
-  if (detectedRisks.length > 0) {
-    summary += ` with ${detectedRisks.length} detected risk(s)`;
+  let summary = `Machine health score: ${healthScore}/100 (${status})`;
+  if (anomalies.length > 0) {
+    summary += ` with ${anomalies.length} detected anomaly(ies)`;
   }
-  summary += ". Analysis based on deterministic sensor evaluation.";
+  summary += ". Analysis based on deterministic telemetry evaluation.";
   
-  const detectedIssues = detectedRisks.map(risk => risk.message);
+  const detectedIssues = anomalies.map(a => a.message);
   
   const recommendations = [];
-  if (detectedRisks.some(r => r.type === "water_stress")) {
-    recommendations.push("Increase watering frequency based on soil moisture levels");
+  if (anomalies.some(a => a.type === "temperature_anomaly")) {
+    recommendations.push("Inspect cooling system and check for blockages");
   }
-  if (detectedRisks.some(r => r.type === "heat_stress")) {
-    recommendations.push("Provide shade or cooling during peak temperature hours");
+  if (anomalies.some(a => a.type === "vibration_anomaly")) {
+    recommendations.push("Check alignment and bearings, schedule vibration analysis");
   }
-  if (detectedRisks.some(r => r.type === "fungal_risk")) {
-    recommendations.push("Improve air circulation and monitor for fungal symptoms");
+  if (anomalies.some(a => a.type === "pressure_anomaly")) {
+    recommendations.push("Inspect for leaks and verify pressure regulators");
   }
-  if (detectedRisks.some(r => r.type === "ph_abnormal")) {
-    recommendations.push("Test and adjust soil pH levels");
+  if (anomalies.some(a => a.type === "power_anomaly")) {
+    recommendations.push("Review electrical connections and load conditions");
+  }
+  if (anomalies.some(a => a.type === "degradation_detected")) {
+    recommendations.push("Schedule preventive maintenance based on trend analysis");
   }
   if (recommendations.length === 0) {
-    recommendations.push("Continue current care routine");
+    recommendations.push("Continue normal operations and monitoring");
   }
   
-  let irrigationAdvice = "Monitor soil moisture levels regularly";
-  if (sensorSnapshot.soilMoisture != null) {
-    if (sensorSnapshot.soilMoisture < 30) {
-      irrigationAdvice = "Water immediately - soil moisture is critically low";
-    } else if (sensorSnapshot.soilMoisture < 40) {
-      irrigationAdvice = "Water within 24 hours - soil moisture is low";
-    } else if (sensorSnapshot.soilMoisture > 70) {
-      irrigationAdvice = "Reduce watering frequency - soil moisture is high";
-    }
-  }
+  let maintenanceAdvice = "Review telemetry and schedule inspection";
+  let operationalImpact = "Continued operation possible, monitor closely";
+  let severity = "MEDIUM";
   
-  let environmentalAdvice = "Maintain stable growing conditions";
-  if (sensorSnapshot.temperature != null) {
-    if (sensorSnapshot.temperature > 32) {
-      environmentalAdvice = "Provide cooling - temperature is too high";
-    } else if (sensorSnapshot.temperature < 15) {
-      environmentalAdvice = "Provide warming - temperature is too low";
-    }
+  if (anomalies.some(a => a.severity === "critical")) {
+    maintenanceAdvice = "Immediate inspection required";
+    operationalImpact = "High risk of failure, consider shutting down for maintenance";
+    severity = "CRITICAL";
+  } else if (anomalies.some(a => a.severity === "high")) {
+    maintenanceAdvice = "Schedule maintenance within 24-48 hours";
+    operationalImpact = "Degraded performance, maintenance needed soon";
+    severity = "HIGH";
+  } else if (anomalies.length === 0) {
+    severity = "LOW";
   }
   
   return {
     summary,
     detectedIssues,
     recommendations,
-    irrigationAdvice,
-    environmentalAdvice,
-    confidence: 0.7 // Lower confidence for fallback
+    maintenanceAdvice,
+    operationalImpact,
+    severity,
+    confidence: 0.7
   };
 };
 
-/**
- * Map new status format to legacy format
- */
 const mapStatusToLegacyFormat = (status) => {
   const statusMap = {
-    'excellent': 'Healthy',
-    'healthy': 'Healthy', 
-    'stressed': 'Moderate Stress',
+    'healthy': 'Healthy',
+    'warning': 'Warning', 
     'critical': 'Critical',
-    'unknown': 'At Risk'
+    'offline': 'Offline'
   };
-  return statusMap[status] || 'At Risk';
+  return statusMap[status] || 'Unknown';
 };
 
-/**
- * Determine risk level based on detected risks and health score
- */
-const determineRiskLevel = (detectedRisks, healthScore) => {
-  if (detectedRisks.some(r => r.severity === 'critical')) return 'Critical';
-  if (detectedRisks.some(r => r.severity === 'high') || healthScore < 50) return 'High';
-  if (detectedRisks.some(r => r.severity === 'medium') || healthScore < 75) return 'Medium';
+const determineRiskLevel = (anomalies, healthScore) => {
+  if (anomalies.some(a => a.severity === 'critical')) return 'Critical';
+  if (anomalies.some(a => a.severity === 'high') || healthScore < 50) return 'High';
+  if (anomalies.some(a => a.severity === 'medium') || healthScore < 75) return 'Medium';
   return 'Low';
 };
 
 /**
- * Main function to analyze plant health using deterministic intelligence + AI
+ * Main function to analyze machine health using deterministic intelligence + AI
  */
-const analyzePlantHealth = async (plant, userId) => {
+const analyzeMachineHealth = async (machine, plant) => {
   try {
-    // Initialize AI if not already done
     if (!model) {
       initializeAI();
     }
 
     let healthIntelligence;
     try {
-      // Generate deterministic health intelligence
-      healthIntelligence = await generateHealthIntelligence(plant);
+      healthIntelligence = await generateMachineHealthIntelligence(machine);
     } catch (error) {
-      // If health intelligence fails, still try to proceed with basic data
       if (error.message.includes("No sensor readings")) {
-        throw error; // Rethrow this specific error
+        throw error;
       }
       
-      // For other health intelligence errors, create a fallback
       healthIntelligence = {
+        machineId: machine._id,
+        machineName: machine.name,
+        machineType: machine.type,
         healthScore: 0,
-        status: "unknown",
-        scoreBreakdown: { soilMoisture: 0, temperature: 0, humidity: 0, ph: 0, light: 0 },
-        scoreReasons: { soilMoisture: "Data error", temperature: "Data error", humidity: "Data error", ph: "Data error", light: "Data error" },
-        detectedRisks: [],
-        riskCount: 0,
-        sensorSnapshot: { temperature: null, humidity: null, soilMoisture: null, ph: null, light: null },
-        dataQuality: { quality: "no_data", readingCount: 0, availableSensors: 0, completeness: 0, issues: ["Health intelligence generation failed"] },
-        plantInfo: {
-          name: plant.name,
-          species: plant.species,
-          ageInDays: Math.floor((Date.now() - new Date(plant.plantingDate)) / (1000 * 60 * 60 * 24))
-        }
+        status: "offline",
+        telemetry: { temperature: null, vibration: null, pressure: null, powerConsumption: null, operatingHours: null },
+        anomalies: [],
+        scoreBreakdown: { temperature: 0, vibration: 0, pressure: 0, power: 0 },
+        scoreReasons: { temperature: "Data error", vibration: "Data error", pressure: "Data error", power: "Data error" },
+        dataQuality: { quality: "no_data", readingCount: 0, issues: ["Health intelligence generation failed"] },
       };
     }
 
     let aiAnalysis = null;
     try {
-      // Create AI prompt with deterministic intelligence
-      const prompt = createEnhancedAnalysisPrompt(plant, healthIntelligence);
-
-      // Call Gemini AI
+      const prompt = createOperationsAdvisorPrompt(machine, plant, healthIntelligence);
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const aiResponseText = response.text();
-
-      // Parse AI response
       aiAnalysis = parseAIResponse(aiResponseText);
-      
     } catch (error) {
       console.warn("AI analysis failed, providing fallback:", error.message);
-      
-      // AI fallback - provide basic interpretation based on deterministic intelligence
       aiAnalysis = createAIFallback(healthIntelligence);
     }
 
-    // Combine deterministic intelligence with AI analysis
     const combinedAnalysis = {
       // Deterministic data (source of truth)
       healthScore: healthIntelligence.healthScore,
       healthStatus: mapStatusToLegacyFormat(healthIntelligence.status),
-      detectedRisks: healthIntelligence.detectedRisks,
+      detectedAnomalies: healthIntelligence.anomalies,
       scoreBreakdown: healthIntelligence.scoreBreakdown,
       
       // AI contextual analysis
       summary: aiAnalysis.summary || "Analysis completed",
       detectedIssues: aiAnalysis.detectedIssues || [],
-      riskLevel: determineRiskLevel(healthIntelligence.detectedRisks, healthIntelligence.healthScore),
+      riskLevel: determineRiskLevel(healthIntelligence.anomalies, healthIntelligence.healthScore),
       recommendations: aiAnalysis.recommendations || [],
-      irrigationAdvice: aiAnalysis.irrigationAdvice || "Monitor soil moisture levels",
-      environmentalAdvice: aiAnalysis.environmentalAdvice || "Maintain stable conditions",
+      maintenanceAdvice: aiAnalysis.maintenanceAdvice || "Monitor telemetry",
+      operationalImpact: aiAnalysis.operationalImpact || "No immediate impact",
+      severity: aiAnalysis.severity || "LOW",
       confidence: aiAnalysis.confidence || 0.8,
       
       // Metadata
       analyzedAt: new Date().toISOString(),
-      readingsAnalyzed: healthIntelligence.dataQuality.readingCount,
-      sensorStatistics: healthIntelligence.sensorSnapshot,
+      readingsAnalyzed: healthIntelligence.readingsAnalyzed,
+      telemetry: healthIntelligence.telemetry,
       dataQuality: healthIntelligence.dataQuality,
     };
 
@@ -304,7 +263,33 @@ const analyzePlantHealth = async (plant, userId) => {
   }
 };
 
+/**
+ * Legacy compatibility wrapper
+ */
+const analyzePlantHealth = async (entity, userId) => {
+  // If entity is a machine
+  if (entity.machineId) {
+    const Plant = require("../models/Plant");
+    const plant = entity.plantId 
+      ? await Plant.findById(entity.plantId)
+      : { name: "Unknown Plant", location: "Unknown" };
+    return analyzeMachineHealth(entity, plant);
+  }
+  
+  // If entity is a plant, analyze all its machines
+  const Machine = require("../models/Machine");
+  const machines = await Machine.find({ plantId: entity._id });
+  
+  if (machines.length === 0) {
+    throw new Error("No machines found for this plant");
+  }
+  
+  // Analyze first machine as default
+  return analyzeMachineHealth(machines[0], entity);
+};
+
 module.exports = {
+  analyzeMachineHealth,
   analyzePlantHealth,
   initializeAI,
 };

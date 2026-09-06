@@ -1,65 +1,115 @@
-const PlantSensorReading = require("../models/PlantSensorReading");
+const SensorReading = require("../models/SensorReading");
+const Machine = require("../models/Machine");
 const {
   extractLatestSensorSnapshot,
   assessDataQuality,
-  calculateHealthScore,
-  detectRisks,
+  calculateMachineHealth,
+  detectAnomalies,
 } = require("./healthCalculations");
 
-const fetchSensorReadings = async (plantId, limit = 50) => {
-  try {
-    const readings = await PlantSensorReading.find({ plantId })
-      .sort({ timestamp: -1 }) // Most recent first
-      .limit(limit);
-    
-    return readings;
-  } catch (error) {
-    throw new Error(`Failed to fetch sensor readings: ${error.message}`);
-  }
+/**
+ * Generate health intelligence for a single machine (PRIMARY)
+ */
+const generateMachineHealthIntelligence = async (machine, readingLimit = 50) => {
+  const readings = await SensorReading.find({ machineId: machine._id })
+    .sort({ recordedAt: -1 })
+    .limit(readingLimit);
+
+  const snapshot = extractLatestSensorSnapshot(readings);
+  const healthData = calculateMachineHealth(snapshot, machine);
+  const anomalies = detectAnomalies(snapshot, machine, readings);
+  const dataQuality = assessDataQuality(readings);
+
+  return {
+    machineId: machine._id,
+    machineName: machine.name,
+    machineType: machine.type,
+    healthScore: healthData.healthScore,
+    status: healthData.status,
+    telemetry: snapshot,
+    anomalies,
+    scoreBreakdown: healthData.scoreBreakdown,
+    scoreReasons: healthData.scoreReasons,
+    dataQuality,
+    readingsAnalyzed: readings.length,
+    analyzedAt: new Date().toISOString(),
+  };
 };
 
-const generateHealthIntelligence = async (plant, readingLimit = 50) => {
-  try {
-    const readings = await fetchSensorReadings(plant._id, readingLimit);
-    const sensorSnapshot = extractLatestSensorSnapshot(readings);
-    const dataQuality = assessDataQuality(readings, sensorSnapshot);
-    const healthScoreData = calculateHealthScore(sensorSnapshot);
-    const detectedRisks = detectRisks(sensorSnapshot, readings);
-    
+/**
+ * Generate plant health summary by aggregating machine health (SECONDARY)
+ */
+const generatePlantHealthSummary = async (plant) => {
+  const machines = await Machine.find({ plantId: plant._id });
+
+  if (machines.length === 0) {
     return {
-      healthScore: healthScoreData.healthScore,
-      status: healthScoreData.status,
-      scoreBreakdown: healthScoreData.scoreBreakdown,
-      scoreReasons: healthScoreData.scoreReasons,
-      detectedRisks,
-      riskCount: detectedRisks.length,
-      criticalRisks: detectedRisks.filter(r => r.severity === "critical").length,
-      highRisks: detectedRisks.filter(r => r.severity === "high").length,
-      sensorSnapshot: {
-        temperature: sensorSnapshot.temperature,
-        humidity: sensorSnapshot.humidity,
-        soilMoisture: sensorSnapshot.soilMoisture,
-        ph: sensorSnapshot.ph,
-        light: sensorSnapshot.light,
-        timestamp: sensorSnapshot.timestamp,
-      },
-      dataQuality,
-      plantInfo: {
-        id: plant._id,
-        name: plant.name,
-        species: plant.species,
-        cropType: plant.cropType,
-        growthStage: plant.growthStage,
-        ageInDays: Math.floor((Date.now() - new Date(plant.plantingDate)) / (1000 * 60 * 60 * 24)),
-      },
-      generatedAt: new Date().toISOString(),
+      plantId: plant._id,
+      plantName: plant.name,
+      plantType: plant.plantType,
+      overallHealthScore: 0,
+      status: "offline",
+      machineCount: 0,
+      machinesByStatus: { healthy: 0, warning: 0, critical: 0, offline: 0 },
+      machines: [],
+      analyzedAt: new Date().toISOString(),
     };
-  } catch (error) {
-    throw new Error(`Health intelligence generation failed: ${error.message}`);
   }
+
+  const machineHealthPromises = machines.map(m =>
+    generateMachineHealthIntelligence(m)
+  );
+  const machineHealthData = await Promise.all(machineHealthPromises);
+
+  const totalHealth = machineHealthData.reduce((sum, m) => sum + m.healthScore, 0);
+  const avgHealthScore = Math.round(totalHealth / machines.length);
+
+  const statusCounts = {
+    healthy: machineHealthData.filter(m => m.status === "healthy").length,
+    warning: machineHealthData.filter(m => m.status === "warning").length,
+    critical: machineHealthData.filter(m => m.status === "critical").length,
+    offline: machineHealthData.filter(m => m.status === "offline").length,
+  };
+
+  let plantStatus = "healthy";
+  if (statusCounts.critical > 0) plantStatus = "critical";
+  else if (statusCounts.warning > 0) plantStatus = "warning";
+  else if (statusCounts.offline === machines.length) plantStatus = "offline";
+
+  return {
+    plantId: plant._id,
+    plantName: plant.name,
+    plantType: plant.plantType,
+    location: plant.location,
+    overallHealthScore: avgHealthScore,
+    status: plantStatus,
+    machineCount: machines.length,
+    machinesByStatus: statusCounts,
+    machines: machineHealthData,
+    analyzedAt: new Date().toISOString(),
+  };
+};
+
+/**
+ * Legacy compatibility: generate health intelligence (uses machine if available)
+ */
+const generateHealthIntelligence = async (entity, readingLimit = 50) => {
+  // If it's a machine, use machine-level intelligence
+  if (entity.machineId) {
+    return generateMachineHealthIntelligence(entity, readingLimit);
+  }
+  
+  // If it's a plant, use plant aggregation
+  if (entity.plantType) {
+    return generatePlantHealthSummary(entity);
+  }
+  
+  // Fallback
+  return generateMachineHealthIntelligence(entity, readingLimit);
 };
 
 module.exports = {
+  generateMachineHealthIntelligence,
+  generatePlantHealthSummary,
   generateHealthIntelligence,
-  fetchSensorReadings,
 };

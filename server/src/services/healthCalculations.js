@@ -1,30 +1,148 @@
 /**
- * Pure health calculation functions (no database dependencies)
+ * Industrial equipment health calculation functions
+ * Equipment-type aware thresholds for CNC, COMPRESSOR, PUMP
  */
 
-const THRESHOLDS = {
-  soilMoisture: { criticalLow: 20, low: 40, optimalMin: 40, optimalMax: 60, high: 80 },
-  temperature: { criticalCold: 10, cold: 15, optimalMin: 18, optimalMax: 28, warm: 32, hot: 38 },
-  humidity: { criticalLow: 30, low: 50, optimalMin: 50, optimalMax: 70, high: 85 },
-  ph: { acidic: 5.5, optimalMin: 6.0, optimalMax: 7.0, alkaline: 7.5 },
-  light: { insufficient: 2000, low: 10000, medium: 20000, excessive: 50000 },
+const EQUIPMENT_PROFILES = {
+  CNC: {
+    temperature: {
+      criticalLow: 10,
+      low: 15,
+      optimalMin: 20,
+      optimalMax: 70,
+      high: 85,
+      criticalHigh: 100
+    },
+    vibration: {
+      normal: 2.0,
+      elevated: 4.0,
+      high: 6.0,
+      critical: 8.0
+    },
+    pressure: null,
+    power: {
+      idle: 100,
+      normal: 800,
+      high: 1200,
+      critical: 1500
+    }
+  },
+  
+  COMPRESSOR: {
+    temperature: {
+      criticalLow: 5,
+      low: 10,
+      optimalMin: 15,
+      optimalMax: 90,
+      high: 110,
+      criticalHigh: 130
+    },
+    vibration: {
+      normal: 3.0,
+      elevated: 6.0,
+      high: 9.0,
+      critical: 12.0
+    },
+    pressure: {
+      criticalLow: 80,
+      low: 100,
+      optimalMin: 120,
+      optimalMax: 150,
+      high: 170,
+      criticalHigh: 200
+    },
+    power: {
+      idle: 50,
+      normal: 500,
+      high: 750,
+      critical: 900
+    }
+  },
+  
+  PUMP: {
+    temperature: {
+      criticalLow: 0,
+      low: 5,
+      optimalMin: 10,
+      optimalMax: 80,
+      high: 95,
+      criticalHigh: 110
+    },
+    vibration: {
+      normal: 2.5,
+      elevated: 5.0,
+      high: 7.5,
+      critical: 10.0
+    },
+    pressure: {
+      criticalLow: 20,
+      low: 40,
+      optimalMin: 60,
+      optimalMax: 100,
+      high: 120,
+      criticalHigh: 150
+    },
+    power: {
+      idle: 75,
+      normal: 600,
+      high: 900,
+      critical: 1100
+    }
+  }
 };
+
+const DEFAULT_PROFILE = {
+  temperature: {
+    criticalLow: 0,
+    low: 10,
+    optimalMin: 20,
+    optimalMax: 80,
+    high: 100,
+    criticalHigh: 120
+  },
+  vibration: {
+    normal: 2.5,
+    elevated: 5.0,
+    high: 7.5,
+    critical: 10.0
+  },
+  pressure: {
+    criticalLow: 50,
+    low: 80,
+    optimalMin: 100,
+    optimalMax: 150,
+    high: 180,
+    criticalHigh: 200
+  },
+  power: {
+    idle: 50,
+    normal: 500,
+    high: 800,
+    critical: 1000
+  }
+};
+
+function getEquipmentProfile(machineType) {
+  if (!machineType) return DEFAULT_PROFILE;
+  const normalizedType = machineType.toUpperCase().replace(/[^A-Z]/g, '');
+  return EQUIPMENT_PROFILES[normalizedType] || DEFAULT_PROFILE;
+}
 
 function extractLatestSensorSnapshot(readings) {
   if (!readings || readings.length === 0) {
     return {
       temperature: null,
-      humidity: null,
-      soilMoisture: null,
-      ph: null,
-      light: null,
-      timestamp: null,
+      vibration: null,
+      pressure: null,
+      powerConsumption: null,
+      operatingHours: null,
+      recordedAt: null,
       availability: {
         temperature: false,
-        humidity: false,
-        soilMoisture: false,
-        ph: false,
-        light: false,
+        vibration: false,
+        pressure: false,
+        power: false,
+        operatingHours: false,
       },
     };
   }
@@ -33,27 +151,23 @@ function extractLatestSensorSnapshot(readings) {
   
   return {
     temperature: latest.temperature != null ? Number(latest.temperature) : null,
-    humidity: latest.humidity != null ? Number(latest.humidity) : null,
-    soilMoisture: latest.soilMoisture != null ? Number(latest.soilMoisture) : null,
-    ph: latest.soilPH != null ? Number(latest.soilPH) : null,
-    light: latest.lightIntensity != null ? Number(latest.lightIntensity) : null,
-    timestamp: latest.timestamp,
+    vibration: latest.vibration != null ? Number(latest.vibration) : null,
+    pressure: latest.pressure != null ? Number(latest.pressure) : null,
+    powerConsumption: latest.powerConsumption != null ? Number(latest.powerConsumption) : null,
+    operatingHours: latest.operatingHours != null ? Number(latest.operatingHours) : null,
+    recordedAt: latest.recordedAt,
     availability: {
       temperature: latest.temperature != null,
-      humidity: latest.humidity != null,
-      soilMoisture: latest.soilMoisture != null,
-      ph: latest.soilPH != null,
-      light: latest.lightIntensity != null,
+      vibration: latest.vibration != null,
+      pressure: latest.pressure != null,
+      power: latest.powerConsumption != null,
+      operatingHours: latest.operatingHours != null,
     },
   };
 }
 
-function assessDataQuality(readings, snapshot) {
+function assessDataQuality(readings) {
   const readingCount = readings.length;
-  const availability = snapshot.availability;
-  
-  const availableSensors = Object.values(availability).filter(Boolean).length;
-  const totalSensors = 5;
   
   let quality = "excellent";
   const issues = [];
@@ -63,375 +177,346 @@ function assessDataQuality(readings, snapshot) {
     issues.push("No sensor readings available");
   } else if (readingCount < 5) {
     quality = "insufficient";
-    issues.push(`Only ${readingCount} readings available (need 5+ for trends)`);
-  } else if (readingCount < 10) {
+    issues.push(`Only ${readingCount} readings available (need 5+ for basic analysis)`);
+  } else if (readingCount < 20) {
     quality = "limited";
-    issues.push("Limited historical data for trend analysis");
+    issues.push("Limited historical data for trend analysis (need 20+ for degradation detection)");
   }
   
-  if (availableSensors < totalSensors) {
-    const missingSensors = Object.entries(availability)
-      .filter(([_, available]) => !available)
-      .map(([sensor, _]) => sensor);
+  if (readingCount > 0) {
+    const latest = readings[0];
+    const availableSensors = [
+      latest.temperature,
+      latest.vibration,
+      latest.pressure,
+      latest.powerConsumption
+    ].filter(v => v != null).length;
     
-    issues.push(`Missing sensors: ${missingSensors.join(", ")}`);
-    
-    if (availableSensors <= 2) {
+    if (availableSensors <= 1) {
       quality = "poor";
-    } else if (availableSensors <= 3 && quality === "excellent") {
+      issues.push("Most sensors unavailable");
+    } else if (availableSensors <= 2 && quality === "excellent") {
       quality = "good";
+      issues.push("Some sensors unavailable");
     }
   }
   
   return {
     quality,
     readingCount,
-    availableSensors,
-    totalSensors,
-    completeness: (availableSensors / totalSensors) * 100,
     issues,
   };
 }
 
-function scoreSensor(value, type) {
-  if (value == null) return { score: 0, reason: "No data available", weight: 20 };
+function scoreSensor(value, type, profile) {
+  if (value == null) return { score: 0, reason: "No data available", weight: 25 };
   
-  const t = THRESHOLDS[type];
+  const t = profile[type];
+  if (!t) return { score: 0, reason: "Not applicable for this equipment", weight: 0 };
+  
   let score = 0;
   let reason = "";
   
-  if (type === "soilMoisture") {
-    if (value < t.criticalLow) {
-      score = 2;
-      reason = "Critical water stress";
-    } else if (value < t.low) {
-      score = 8 + ((value - t.criticalLow) / (t.low - t.criticalLow)) * 8;
-      reason = "Low moisture, needs irrigation";
-    } else if (value >= t.optimalMin && value <= t.optimalMax) {
-      score = 20;
-      reason = "Optimal moisture level";
-    } else if (value < t.high) {
-      score = 18 - ((value - t.optimalMax) / (t.high - t.optimalMax)) * 3;
-      reason = "Slightly high moisture";
-    } else {
-      score = 8 - Math.min((value - t.high) / 10, 1) * 5;
-      reason = "Overwatering risk";
-    }
-  } else if (type === "temperature") {
-    if (value < t.criticalCold) {
-      score = 2;
-      reason = "Critical cold stress";
-    } else if (value < t.cold) {
-      score = 5 + ((value - t.criticalCold) / (t.cold - t.criticalCold)) * 5;
-      reason = "Cold stress";
-    } else if (value < t.optimalMin) {
-      score = 10 + ((value - t.cold) / (t.optimalMin - t.cold)) * 5;
-      reason = "Cool temperature";
-    } else if (value >= t.optimalMin && value <= t.optimalMax) {
-      score = 20;
-      reason = "Optimal temperature";
-    } else if (value < t.warm) {
-      score = 15 + (1 - ((value - t.optimalMax) / (t.warm - t.optimalMax))) * 5;
-      reason = "Warm temperature";
-    } else if (value < t.hot) {
-      score = 5 + (1 - ((value - t.warm) / (t.hot - t.warm))) * 10;
-      reason = "Heat stress";
-    } else {
-      score = Math.max(0, 5 - ((value - t.hot) / 5));
-      reason = "Critical heat stress";
-    }
-  } else if (type === "humidity") {
+  if (type === "temperature") {
     if (value < t.criticalLow) {
       score = 5;
-      reason = "Very low humidity, desiccation risk";
+      reason = "Critical low temperature";
     } else if (value < t.low) {
       score = 10 + ((value - t.criticalLow) / (t.low - t.criticalLow)) * 5;
-      reason = "Low humidity";
+      reason = "Below normal temperature";
     } else if (value >= t.optimalMin && value <= t.optimalMax) {
-      score = 20;
-      reason = "Optimal humidity";
+      score = 25;
+      reason = "Optimal temperature";
     } else if (value < t.high) {
-      score = 18 - ((value - t.optimalMax) / (t.high - t.optimalMax)) * 6;
-      reason = "High humidity, monitor for fungi";
+      score = 20 - ((value - t.optimalMax) / (t.high - t.optimalMax)) * 5;
+      reason = "Elevated temperature";
+    } else if (value < t.criticalHigh) {
+      score = 10 - ((value - t.high) / (t.criticalHigh - t.high)) * 5;
+      reason = "High temperature warning";
     } else {
-      score = 8 - Math.min((value - t.high) / 10, 1) * 3;
-      reason = "Excessive humidity, fungal risk";
+      score = 2;
+      reason = "Critical high temperature";
     }
-  } else if (type === "ph") {
-    if (value < t.acidic) {
-      score = 8 - Math.min((t.acidic - value) / 1.0, 1) * 5;
-      reason = "Too acidic, nutrient lockout risk";
-    } else if (value < t.optimalMin) {
-      score = 12 + ((value - t.acidic) / (t.optimalMin - t.acidic)) * 3;
-      reason = "Slightly acidic";
-    } else if (value >= t.optimalMin && value <= t.optimalMax) {
-      score = 20;
-      reason = "Optimal pH";
-    } else if (value < t.alkaline) {
-      score = 15 + (1 - ((value - t.optimalMax) / (t.alkaline - t.optimalMax))) * 5;
-      reason = "Slightly alkaline";
+  } else if (type === "vibration") {
+    if (value <= t.normal) {
+      score = 25;
+      reason = "Normal vibration levels";
+    } else if (value < t.elevated) {
+      score = 20 - ((value - t.normal) / (t.elevated - t.normal)) * 5;
+      reason = "Slightly elevated vibration";
+    } else if (value < t.high) {
+      score = 10 - ((value - t.elevated) / (t.high - t.elevated)) * 5;
+      reason = "High vibration detected";
+    } else if (value < t.critical) {
+      score = 5;
+      reason = "Very high vibration";
     } else {
-      score = 8 - Math.min((value - t.alkaline) / 1.0, 1) * 5;
-      reason = "Too alkaline, reduced nutrient availability";
+      score = 2;
+      reason = "Critical vibration levels";
     }
-  } else if (type === "light") {
-    if (value < t.insufficient) {
-      score = 5 + (value / t.insufficient) * 5;
-      reason = "Insufficient light for growth";
+  } else if (type === "pressure") {
+    if (value < t.criticalLow) {
+      score = 2;
+      reason = "Critical low pressure";
     } else if (value < t.low) {
-      score = 10 + ((value - t.insufficient) / (t.low - t.insufficient)) * 5;
-      reason = "Low light conditions";
-    } else if (value < t.medium) {
-      score = 15 + ((value - t.low) / (t.medium - t.low)) * 3;
-      reason = "Moderate light levels";
-    } else if (value < t.excessive) {
-      score = 20;
-      reason = "Good light exposure";
+      score = 10;
+      reason = "Low pressure detected";
+    } else if (value >= t.optimalMin && value <= t.optimalMax) {
+      score = 25;
+      reason = "Optimal pressure";
+    } else if (value < t.high) {
+      score = 15;
+      reason = "Elevated pressure";
+    } else if (value < t.criticalHigh) {
+      score = 10;
+      reason = "High pressure warning";
     } else {
-      score = 18 - Math.min((value - t.excessive) / 20000, 1) * 8;
-      reason = "Very high light, monitor for stress";
+      score = 2;
+      reason = "Critical high pressure";
+    }
+  } else if (type === "power") {
+    if (value < t.idle) {
+      score = 20;
+      reason = "Idle power consumption";
+    } else if (value <= t.normal) {
+      score = 25;
+      reason = "Normal power consumption";
+    } else if (value < t.high) {
+      score = 15;
+      reason = "Elevated power consumption";
+    } else if (value < t.critical) {
+      score = 10;
+      reason = "High power consumption";
+    } else {
+      score = 2;
+      reason = "Critical power consumption";
     }
   }
   
-  return { score: Math.round(score), reason, weight: 20 };
+  return { score: Math.round(score), reason, weight: 25 };
 }
 
-function calculateHealthScore(snapshot) {
+function calculateMachineHealth(snapshot, machine) {
+  const profile = getEquipmentProfile(machine.type);
+  
   const scores = [
-    scoreSensor(snapshot.soilMoisture, 'soilMoisture'),
-    scoreSensor(snapshot.temperature, 'temperature'),
-    scoreSensor(snapshot.humidity, 'humidity'),
-    scoreSensor(snapshot.ph, 'ph'),
-    scoreSensor(snapshot.light, 'light')
+    scoreSensor(snapshot.temperature, 'temperature', profile),
+    scoreSensor(snapshot.vibration, 'vibration', profile),
+    scoreSensor(snapshot.pressure, 'pressure', profile),
+    scoreSensor(snapshot.powerConsumption, 'power', profile)
   ];
   
-  const availableScores = scores.filter(s => s.score > 0);
+  const availableScores = scores.filter(s => s.weight > 0 && s.score > 0);
   const totalScore = availableScores.reduce((sum, s) => sum + s.score, 0);
   const totalWeight = availableScores.reduce((sum, s) => sum + s.weight, 0);
   const healthScore = totalWeight > 0 ? Math.round((totalScore / totalWeight) * 100) : 0;
   
-  let status = "unknown";
-  if (healthScore >= 90) status = "excellent";
-  else if (healthScore >= 75) status = "healthy";
-  else if (healthScore >= 50) status = "stressed";
+  let status = "offline";
+  if (healthScore >= 85) status = "healthy";
+  else if (healthScore >= 65) status = "warning";
   else if (healthScore > 0) status = "critical";
   
   return {
     healthScore,
     status,
     scoreBreakdown: {
-      soilMoisture: scores[0].score,
-      temperature: scores[1].score,
-      humidity: scores[2].score,
-      ph: scores[3].score,
-      light: scores[4].score,
+      temperature: scores[0].score,
+      vibration: scores[1].score,
+      pressure: scores[2].score,
+      power: scores[3].score,
     },
     scoreReasons: {
-      soilMoisture: scores[0].reason,
-      temperature: scores[1].reason,
-      humidity: scores[2].reason,
-      ph: scores[3].reason,
-      light: scores[4].reason,
+      temperature: scores[0].reason,
+      vibration: scores[1].reason,
+      pressure: scores[2].reason,
+      power: scores[3].reason,
     },
   };
 }
 
-function detectRisks(snapshot, readings) {
-  const risks = [];
+function detectDegradation(readings, machine) {
+  if (readings.length < 20) return null;
   
-  if (snapshot.soilMoisture != null) {
-    const sm = snapshot.soilMoisture;
-    const t = THRESHOLDS.soilMoisture;
+  const profile = getEquipmentProfile(machine.type);
+  
+  // Vibration trend analysis
+  const vibrationReadings = readings
+    .filter(r => r.vibration != null)
+    .slice(0, 20)
+    .map(r => r.vibration);
+  
+  if (vibrationReadings.length >= 20) {
+    const recentVibration = vibrationReadings.slice(0, 10);
+    const olderVibration = vibrationReadings.slice(10, 20);
     
-    if (sm < t.criticalLow) {
-      risks.push({
-        type: "water_stress",
-        severity: "critical",
-        message: "Severe water stress detected - immediate irrigation required",
-        evidence: { parameter: "soilMoisture", value: sm, threshold: t.criticalLow },
-      });
-    } else if (sm < t.low) {
-      risks.push({
-        type: "water_stress",
-        severity: "high",
-        message: "Low soil moisture - plant needs watering soon",
-        evidence: { parameter: "soilMoisture", value: sm, threshold: t.low },
-      });
-    } else if (sm > t.high) {
-      const severity = sm > 90 ? "high" : "medium";
-      risks.push({
-        type: "overwatering",
-        severity,
-        message: severity === "high" ? "Excessive soil moisture - root rot risk" : "Soil moisture is high - reduce watering frequency",
-        evidence: { parameter: "soilMoisture", value: sm, threshold: t.high },
-      });
+    const recentAvg = recentVibration.reduce((a, b) => a + b, 0) / recentVibration.length;
+    const olderAvg = olderVibration.reduce((a, b) => a + b, 0) / olderVibration.length;
+    const trend = ((recentAvg - olderAvg) / olderAvg) * 100;
+    
+    if (trend > 15) {
+      return {
+        type: "degradation_detected",
+        severity: recentAvg > profile.vibration.elevated ? "high" : "medium",
+        message: `Equipment degradation detected - vibration trending upward (+${trend.toFixed(1)}%)`,
+        evidence: {
+          metric: "vibration",
+          trend: `+${trend.toFixed(1)}%`,
+          recentAvg: recentAvg.toFixed(2),
+          olderAvg: olderAvg.toFixed(2),
+          analysis: "Possible bearing wear or misalignment"
+        }
+      };
     }
   }
   
+  return null;
+}
+
+function detectAnomalies(snapshot, machine, readings) {
+  const anomalies = [];
+  const profile = getEquipmentProfile(machine.type);
+  
+  // Temperature anomalies
   if (snapshot.temperature != null) {
     const temp = snapshot.temperature;
-    const t = THRESHOLDS.temperature;
+    const t = profile.temperature;
     
-    if (temp < t.criticalCold) {
-      risks.push({
-        type: "cold_stress",
+    if (temp < t.criticalLow || temp > t.criticalHigh) {
+      anomalies.push({
+        type: "temperature_anomaly",
         severity: "critical",
-        message: "Critical cold temperature - frost damage risk",
-        evidence: { parameter: "temperature", value: temp, threshold: t.criticalCold },
+        message: temp < t.criticalLow 
+          ? `Critical low temperature: ${temp}°C (min: ${t.criticalLow}°C)`
+          : `Critical high temperature: ${temp}°C (max: ${t.criticalHigh}°C)`,
+        evidence: { parameter: "temperature", value: temp, threshold: temp < t.criticalLow ? t.criticalLow : t.criticalHigh }
       });
-    } else if (temp < t.cold) {
-      risks.push({
-        type: "cold_stress",
+    } else if (temp > t.high) {
+      anomalies.push({
+        type: "temperature_anomaly",
         severity: "high",
-        message: "Cold stress - growth may be impaired",
-        evidence: { parameter: "temperature", value: temp, threshold: t.cold },
+        message: `Elevated temperature: ${temp}°C (normal max: ${t.optimalMax}°C)`,
+        evidence: { parameter: "temperature", value: temp, threshold: t.high }
       });
-    } else if (temp > t.hot) {
-      risks.push({
-        type: "heat_stress",
+    } else if (temp < t.low) {
+      anomalies.push({
+        type: "temperature_anomaly",
+        severity: "medium",
+        message: `Low temperature: ${temp}°C (normal min: ${t.optimalMin}°C)`,
+        evidence: { parameter: "temperature", value: temp, threshold: t.low }
+      });
+    }
+  }
+  
+  // Vibration anomalies
+  if (snapshot.vibration != null) {
+    const vib = snapshot.vibration;
+    const t = profile.vibration;
+    
+    if (vib >= t.critical) {
+      anomalies.push({
+        type: "vibration_anomaly",
         severity: "critical",
-        message: "Extreme heat - severe stress and potential damage",
-        evidence: { parameter: "temperature", value: temp, threshold: t.hot },
+        message: `Critical vibration: ${vib} mm/s (critical: ${t.critical} mm/s)`,
+        evidence: { parameter: "vibration", value: vib, threshold: t.critical }
       });
-    } else if (temp > t.warm) {
-      risks.push({
-        type: "heat_stress",
+    } else if (vib >= t.high) {
+      anomalies.push({
+        type: "vibration_anomaly",
         severity: "high",
-        message: "Heat stress - increased water demand",
-        evidence: { parameter: "temperature", value: temp, threshold: t.warm },
+        message: `High vibration: ${vib} mm/s (normal: <${t.normal} mm/s)`,
+        evidence: { parameter: "vibration", value: vib, threshold: t.high }
       });
-    }
-  }
-  
-  if (snapshot.humidity != null) {
-    const hum = snapshot.humidity;
-    const t = THRESHOLDS.humidity;
-    
-    if (hum < t.criticalLow) {
-      risks.push({
-        type: "low_humidity",
-        severity: "high",
-        message: "Very low humidity - desiccation and wilting risk",
-        evidence: { parameter: "humidity", value: hum, threshold: t.criticalLow },
-      });
-    } else if (hum > t.high) {
-      risks.push({
-        type: "excessive_humidity",
-        severity: "high",
-        message: "Excessive humidity - high fungal disease risk",
-        evidence: { parameter: "humidity", value: hum, threshold: t.high },
-      });
-    }
-  }
-  
-  if (snapshot.humidity != null && snapshot.temperature != null) {
-    const hum = snapshot.humidity;
-    const temp = snapshot.temperature;
-    
-    if (hum > 70 && temp >= 20 && temp <= 30) {
-      risks.push({
-        type: "fungal_risk",
-        severity: "high",
-        message: "Conditions favorable for fungal diseases - monitor leaves closely",
-        evidence: { parameter: "humidity + temperature", value: { humidity: hum, temperature: temp }, conditions: "High humidity with warm temperature" },
-      });
-    }
-  }
-  
-  if (snapshot.ph != null) {
-    const ph = snapshot.ph;
-    const t = THRESHOLDS.ph;
-    
-    if (ph < t.acidic) {
-      risks.push({
-        type: "ph_abnormal",
-        severity: "high",
-        message: "Soil too acidic - nutrient uptake impaired",
-        evidence: { parameter: "ph", value: ph, threshold: t.acidic },
-      });
-    } else if (ph > t.alkaline) {
-      risks.push({
-        type: "ph_abnormal",
-        severity: "high",
-        message: "Soil too alkaline - reduced nutrient availability",
-        evidence: { parameter: "ph", value: ph, threshold: t.alkaline },
-      });
-    } else if (ph < t.optimalMin || ph > t.optimalMax) {
-      const severity = "medium";
-      const message = ph < t.optimalMin 
-        ? "Soil slightly acidic - monitor nutrient levels"
-        : "Soil slightly alkaline - watch for deficiencies";
-      const threshold = ph < t.optimalMin ? t.optimalMin : t.optimalMax;
-      risks.push({
-        type: "ph_abnormal",
-        severity,
-        message,
-        evidence: { parameter: "ph", value: ph, threshold },
-      });
-    }
-  }
-  
-  if (snapshot.light != null) {
-    const light = snapshot.light;
-    const t = THRESHOLDS.light;
-    
-    if (light < t.insufficient) {
-      risks.push({
-        type: "insufficient_light",
-        severity: "high",
-        message: "Insufficient light for healthy growth",
-        evidence: { parameter: "light", value: light, threshold: t.insufficient },
-      });
-    } else if (light < t.low) {
-      risks.push({
-        type: "insufficient_light",
+    } else if (vib >= t.elevated) {
+      anomalies.push({
+        type: "vibration_anomaly",
         severity: "medium",
-        message: "Low light conditions - growth may be slower",
-        evidence: { parameter: "light", value: light, threshold: t.low },
-      });
-    } else if (light > t.excessive) {
-      risks.push({
-        type: "excessive_light",
-        severity: "medium",
-        message: "Very high light intensity - monitor for leaf burn",
-        evidence: { parameter: "light", value: light, threshold: t.excessive },
+        message: `Elevated vibration: ${vib} mm/s`,
+        evidence: { parameter: "vibration", value: vib, threshold: t.elevated }
       });
     }
   }
   
-  if (readings && readings.length >= 10 && snapshot.soilMoisture != null) {
-    const moistureReadings = readings
-      .filter(r => r.soilMoisture != null)
-      .slice(0, 10)
-      .map(r => r.soilMoisture);
+  // Pressure anomalies (if applicable)
+  if (snapshot.pressure != null && profile.pressure) {
+    const press = snapshot.pressure;
+    const t = profile.pressure;
     
-    if (moistureReadings.length >= 10) {
-      const recent = moistureReadings.slice(0, 5).reduce((a, b) => a + b, 0) / 5;
-      const older = moistureReadings.slice(5, 10).reduce((a, b) => a + b, 0) / 5;
-      const trend = recent - older;
-      
-      if (trend < -10) {
-        risks.push({
-          type: "rapid_drying",
-          severity: "medium",
-          message: "Soil moisture declining rapidly - check irrigation schedule",
-          evidence: {
-            parameter: "soilMoisture",
-            value: snapshot.soilMoisture,
-            trend: `Decreasing by ${Math.abs(trend).toFixed(1)}% over recent readings`,
-          },
-        });
-      }
+    if (press < t.criticalLow || press > t.criticalHigh) {
+      anomalies.push({
+        type: "pressure_anomaly",
+        severity: "critical",
+        message: press < t.criticalLow
+          ? `Critical low pressure: ${press} PSI (min: ${t.criticalLow} PSI)`
+          : `Critical high pressure: ${press} PSI (max: ${t.criticalHigh} PSI)`,
+        evidence: { parameter: "pressure", value: press, threshold: press < t.criticalLow ? t.criticalLow : t.criticalHigh }
+      });
+    } else if (press < t.low) {
+      anomalies.push({
+        type: "pressure_anomaly",
+        severity: "high",
+        message: `Low pressure: ${press} PSI (normal: ${t.optimalMin}-${t.optimalMax} PSI)`,
+        evidence: { parameter: "pressure", value: press, threshold: t.low }
+      });
+    } else if (press > t.high) {
+      anomalies.push({
+        type: "pressure_anomaly",
+        severity: "high",
+        message: `High pressure: ${press} PSI (normal: ${t.optimalMin}-${t.optimalMax} PSI)`,
+        evidence: { parameter: "pressure", value: press, threshold: t.high }
+      });
     }
   }
   
-  return risks;
+  // Power anomalies
+  if (snapshot.powerConsumption != null) {
+    const power = snapshot.powerConsumption;
+    const t = profile.power;
+    
+    if (power >= t.critical) {
+      anomalies.push({
+        type: "power_anomaly",
+        severity: "critical",
+        message: `Critical power consumption: ${power} kW (critical: ${t.critical} kW)`,
+        evidence: { parameter: "power", value: power, threshold: t.critical }
+      });
+    } else if (power >= t.high) {
+      anomalies.push({
+        type: "power_anomaly",
+        severity: "high",
+        message: `High power consumption: ${power} kW (normal: ${t.normal} kW)`,
+        evidence: { parameter: "power", value: power, threshold: t.high }
+      });
+    }
+  }
+  
+  // Degradation detection (trend-based)
+  const degradation = detectDegradation(readings, machine);
+  if (degradation) {
+    anomalies.push(degradation);
+  }
+  
+  // Maintenance required (multiple indicators)
+  if (anomalies.length >= 2) {
+    const highSeverity = anomalies.filter(a => a.severity === "critical" || a.severity === "high").length;
+    if (highSeverity >= 2) {
+      anomalies.push({
+        type: "maintenance_required",
+        severity: "high",
+        message: `Multiple anomalies detected - maintenance recommended`,
+        evidence: { anomalyCount: anomalies.length, highSeverityCount: highSeverity }
+      });
+    }
+  }
+  
+  return anomalies;
 }
 
 module.exports = {
   extractLatestSensorSnapshot,
   assessDataQuality,
-  calculateHealthScore,
-  detectRisks,
-  THRESHOLDS,
+  calculateMachineHealth,
+  detectAnomalies,
+  getEquipmentProfile,
+  EQUIPMENT_PROFILES,
+  DEFAULT_PROFILE,
 };

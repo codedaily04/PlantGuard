@@ -1,58 +1,84 @@
 const Plant = require("../models/Plant");
-const { analyzePlantHealth } = require("../services/aiService");
+const Machine = require("../models/Machine");
+const { analyzeMachineHealth } = require("../services/aiService");
 
 /**
- * Analyze plant health using AI
- * GET /api/ai/analyze/:plantId
+ * Analyze machine health using AI
+ * GET /api/ai/analyze/:machineId
  */
 const analyzePlant = async (req, res) => {
   try {
     const { plantId } = req.params;
 
-    // Check if GEMINI_API_KEY is configured
     if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({
         message: "AI service is not configured. Please add GEMINI_API_KEY to environment variables.",
       });
     }
 
-    // Verify the plant exists and belongs to the user
-    const plant = await Plant.findOne({
-      _id: plantId,
-      owner: req.user._id,
-    });
-
-    if (!plant) {
-      return res.status(404).json({
-        message: "Plant not found or access denied",
+    // Support both plant and machine analysis
+    // Try to find as machine first (backward compatibility)
+    let machine = await Machine.findById(plantId);
+    let plant;
+    
+    if (machine) {
+      // It's a machine ID
+      plant = machine.plantId 
+        ? await Plant.findById(machine.plantId)
+        : { name: "Unknown Plant", location: "Unknown", plantType: "Unknown" };
+    } else {
+      // Try as plant ID, get first machine
+      plant = await Plant.findOne({
+        _id: plantId,
+        owner: req.user._id,
       });
+
+      if (!plant) {
+        return res.status(404).json({
+          message: "Plant or machine not found or access denied",
+        });
+      }
+
+      // Get first machine for this plant
+      machine = await Machine.findOne({ plantId: plant._id });
+      
+      if (!machine) {
+        return res.status(404).json({
+          message: "No machines found for this plant",
+        });
+      }
     }
 
-    // Perform AI analysis
-    const analysis = await analyzePlantHealth(plant, req.user._id);
+    // Perform AI analysis on machine
+    const analysis = await analyzeMachineHealth(machine, plant);
 
     res.json({
       success: true,
+      machine: {
+        id: machine._id,
+        name: machine.name,
+        type: machine.type,
+        machineId: machine.machineId
+      },
       plant: {
         id: plant._id,
         name: plant.name,
-        species: plant.species,
-        cropType: plant.cropType,
-        growthStage: plant.growthStage,
+        plantType: plant.plantType,
         location: plant.location
       },
       health: {
         score: analysis.healthScore,
         status: analysis.healthStatus,
-        detectedRisks: analysis.detectedRisks,
+        detectedAnomalies: analysis.detectedAnomalies,
         scoreBreakdown: analysis.scoreBreakdown
       },
       aiAnalysis: {
         summary: analysis.summary,
         detectedIssues: analysis.detectedIssues,
         recommendations: analysis.recommendations,
-        irrigationAdvice: analysis.irrigationAdvice,
-        environmentalAdvice: analysis.environmentalAdvice,
+        maintenanceAdvice: analysis.maintenanceAdvice,
+        operationalImpact: analysis.operationalImpact,
+        severity: analysis.severity,
         confidence: analysis.confidence
       },
       metadata: {
@@ -64,10 +90,9 @@ const analyzePlant = async (req, res) => {
   } catch (error) {
     console.error("AI Analysis Error:", error);
 
-    // Handle specific error cases
     if (error.message.includes("No sensor readings")) {
       return res.status(404).json({
-        message: "No sensor readings available for this plant",
+        message: "No sensor readings available for this machine",
         error: error.message,
       });
     }
@@ -93,9 +118,8 @@ const analyzePlant = async (req, res) => {
       });
     }
 
-    // Generic error
     res.status(500).json({
-      message: "Failed to analyze plant health",
+      message: "Failed to analyze machine health",
       error: error.message,
     });
   }
