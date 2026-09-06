@@ -4,11 +4,12 @@ const { analyzeMachineHealth } = require("../services/aiService");
 
 /**
  * Analyze machine health using AI
- * GET /api/ai/analyze/:machineId
+ * GET /api/ai/analyze/:machineId?includeRisk=true
  */
 const analyzePlant = async (req, res) => {
   try {
     const { plantId } = req.params;
+    const { includeRisk = 'true' } = req.query;
 
     if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({
@@ -49,8 +50,10 @@ const analyzePlant = async (req, res) => {
       }
     }
 
-    // Perform AI analysis on machine
-    const analysis = await analyzeMachineHealth(machine, plant);
+    // Perform AI analysis on machine with degradation risk
+    const analysis = await analyzeMachineHealth(machine, plant, {
+      includeRisk: includeRisk === 'true'
+    });
 
     res.json({
       success: true,
@@ -72,6 +75,9 @@ const analyzePlant = async (req, res) => {
         detectedAnomalies: analysis.detectedAnomalies,
         scoreBreakdown: analysis.scoreBreakdown
       },
+      degradationRisk: analysis.degradationRisk,
+      aiInterpretation: analysis.aiInterpretation,
+      // Legacy compatibility
       aiAnalysis: {
         summary: analysis.summary,
         detectedIssues: analysis.detectedIssues,
